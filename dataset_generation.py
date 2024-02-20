@@ -4,6 +4,7 @@ Generate dataset for font classification task
 import os
 import random
 import traceback
+from tqdm import tqdm
 from argparse import ArgumentParser
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageChops
@@ -11,6 +12,7 @@ from typing import Union, Tuple, List, Dict, Optional
 
 
 import cv2
+import wikipedia
 import numpy as np
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -99,6 +101,50 @@ def opposite_color_hls(rgb):
     h_opposite = (h + 1/2) % 1
     return hls_to_rgb((h_opposite, l, s))
 
+def get_random_page_content() -> str:
+    page_title = wikipedia.random(1)
+    try:
+        page_content = wikipedia.page(page_title).summary
+    except (wikipedia.DisambiguationError, wikipedia.PageError):
+        return get_random_page_content()
+    return page_content
+
+
+def split_string(string, min_length, max_length):
+    substrings = []
+    start = 0
+    length = len(string)
+    
+    for i in range(length // max_length):
+        substr = string[start : start + max_length]
+        start += max_length
+        substrings.append(substr)
+    
+    if length - start > min_length:
+        substrings.append(string[start:])
+    
+    return substrings
+
+
+def create_strings_from_wikipedia(minimum_length, count, lang, max_length=-1):
+    """
+        Create all string by randomly picking Wikipedia articles and taking sentences from them.
+    """
+    wikipedia.set_lang(lang)
+    sentences = []
+
+    while len(sentences) < count:
+        page_content = get_random_page_content()
+        processed_content = page_content.replace("\n", " ").split(". ")
+        sentence_candidates = [s.strip() for s in processed_content if len(s.split()) > minimum_length]
+        
+        for candidate in sentence_candidates:
+            strings = split_string(candidate, minimum_length, max_length)
+            if len(strings) > 0:
+                sentences.extend(strings)
+        # sentences.extend(sentence_candidates)
+
+    return sentences[0:count]
 
 
 class ResizeWithPad:
@@ -174,7 +220,8 @@ class FontGenerator:
         self.gray_color = gray_color
         
         self.backgrounds = []
-        self.fonts = []
+        self.fonts = {}
+        self.fonts_cache = {}
         
         # Init background images cache
         self.load_backgrounds()
@@ -191,6 +238,7 @@ class FontGenerator:
                 
         # Create a cache for background images
         self.backgrounds_cache = {}
+        self.text_cache = []
     
     def load_fonts(self):
         # load blacklisted fonts
@@ -199,14 +247,27 @@ class FontGenerator:
             for line in f:
                 self.blacklisted_fonts.append(line.strip())
         
-        self.fonts = []
-        for file in os.listdir(self.fonts_path):
-            if file.endswith('.ttf'):
-                if file in self.blacklisted_fonts:
-                    continue
-                self.fonts.append(os.path.join(self.fonts_path, file))
+        self.fonts = {}
+        for root, dirs, files in os.walk(self.fonts_path):
+            for file in files:
+                if file.endswith('.ttf'):
+                    if file in self.blacklisted_fonts:
+                        continue
+                    fontname = os.path.splitext(file)[0]
+                    print(fontname, os.path.join(root, file))
+                    self.fonts[fontname] =  os.path.join(root, file)
+                    
+    def get_random_font(self):
+        font_name = random.choice(list(self.fonts.keys()))
+        font_path = self.fonts[font_name]
+        if font_name in self.fonts_cache:
+            font = self.fonts_cache[font_name]
+        else:
+            font = ImageFont.truetype(font_path, size=32)
+            self.fonts_cache[font_name] = font
+        return font
     
-    def generate_image(self, text, font,
+    def generate_image(self, text,
                        font_size: int = 32,
                        font_color: Optional[Tuple[int, int, int]] = (0, 0, 0),
                        position: str = 'center',  # center, random
@@ -230,7 +291,10 @@ class FontGenerator:
                               (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
 
         draw = ImageDraw.Draw(image)
-        font = ImageFont.truetype(font, size=font_size)
+        
+        # Select random font and font size
+        font = self.get_random_font()
+        font = font.font_variant(size=font_size)
         
         if font_color is None:
             # Adjust font color to contrast with background
@@ -243,20 +307,13 @@ class FontGenerator:
             y = (self.size[1] - text_h) / 2
         elif position == 'random':
             # apply padding
-            x = random.randint(padding, self.size[0] - text_w - padding)
-            y = random.randint(padding, self.size[1] - text_h - padding)
+            x = random.randint(padding, max(padding, self.size[0] - text_w - padding))
+            y = random.randint(padding, max(padding, self.size[1] - text_h - padding))
         else:
             raise ValueError(f'Unknown position: {position}')
         
         # Draw text       
         draw.text((x, y), text, fill=font_color, font=font)
-        
-        # Apply blur
-        if self.random_blur:
-            blur = random.randint(0, self.blur)
-        else:
-            blur = self.blur
-        image = image.filter(ImageFilter.GaussianBlur(blur))
         
         return image
     
@@ -265,6 +322,16 @@ class FontGenerator:
         Calculate font color to contrast with background
         """
         pass
+    
+    def generate_text(self):
+        """
+        Generate random text from wikipedia
+        """
+        if len(self.text_cache) == 0:
+            # Load text from wikipedia
+            self.text_cache.extend(create_strings_from_wikipedia(self.min_length, 1000, 'en', self.max_length))
+        
+        return self.text_cache.pop()
     
     def random_crop_with_padding(self, image, pad_color=(255, 255, 255)):
         """
@@ -279,7 +346,7 @@ class FontGenerator:
         
         return image
     
-    def get_random_background(self, w=256, h=256, pad_color=(255, 255, 255)):
+    def get_random_background(self, pad_color=(255, 255, 255)):
         """
         Load background image from background cache
         """
@@ -295,7 +362,7 @@ class FontGenerator:
             self.backgrounds_cache[random_background] = background
         
         # Random crop with padding
-        background = self.random_crop_with_padding(background, w, h, pad_color)    
+        background = self.random_crop_with_padding(background, pad_color)    
         
         # Apply color
         if self.gray_color:
@@ -335,11 +402,11 @@ def main(args):
     font_generator = FontGenerator(size=(256, 256), min_length=args.min_length, max_length=args.max_length, backgrounds_path=args.backgrounds, fonts_path=args.fonts, background_ratio=args.background_ratio)
     
     # Generate images
-    for i in range(args.N):
+    for i in tqdm(range(args.N)):
         try:
             text = font_generator.generate_text()
             # Generate image
-            image = font_generator.generate_image(text, font, background)
+            image = font_generator.generate_image(text, position='random', background_image=True, font_size=32, padding=10)
             
             # Save image
             image.save(os.path.join(args.output, f'{i}.jpg'))
