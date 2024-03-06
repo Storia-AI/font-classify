@@ -28,7 +28,6 @@ def parse_args():
 
     # Add arguments
     parser.add_argument('--image_folder', type=str, default='/path/to/image/folder', help='Path to the folder containing the images')
-    parser.add_argument('--label_file', type=str, default='/path/to/label/file.json', help='Path to the JSON file containing the labels')
     parser.add_argument('--test_split', type=float, default=0.15, help='Fraction of the dataset to be used for testing')
     parser.add_argument('-net', '--network_type', type=str, default='resnet50', help='Type of network architecture')
     parser.add_argument('--num_classes', type=int, default=10, help='Number of classes in the dataset')
@@ -134,7 +133,7 @@ def main(args):
     
     # Access the arguments
     image_folder = args.image_folder
-    label_file = args.label_file
+    # label_file = args.label_file
     network_type = args.network_type
     best_model_params_path = 'best_model_params.pt'
     

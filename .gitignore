@@ -1,5 +1,8 @@
 # Repository specific
 test_output/
+check
+runs
+best_model_params.pt
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

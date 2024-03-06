@@ -2,6 +2,7 @@
 Generate dataset for font classification task
 """
 import os
+import sys
 import random
 import traceback
 from tqdm import tqdm
@@ -18,6 +19,12 @@ import albumentations as A
 from albumentations.pytorch import ToTensorV2
 from PIL import Image
 from sklearn.cluster import KMeans # the KNN Clustering module
+
+from loguru import logger
+
+
+logger.remove()
+logger.add(sys.stdout, level="INFO")
 
 
 def get_common_colors(img, colors=32, max_points=-1, N=3,
@@ -47,10 +54,10 @@ def get_common_colors(img, colors=32, max_points=-1, N=3,
 
     if max_points > 0 and max_points < img_flat.shape[0]:
         idx = np.random.choice(np.arange(img_flat.shape[0]), max_points, replace=False)
-        kmeans = KMeans(n_clusters=colors, random_state=0).fit(img_flat[idx])
+        kmeans = KMeans(n_clusters=colors, n_init='auto', random_state=0).fit(img_flat[idx])
         labels = kmeans.predict(img_flat)
     else:
-        kmeans = KMeans(n_clusters=colors, random_state=0).fit(img_flat)
+        kmeans = KMeans(n_clusters=colors, n_init='auto', random_state=0).fit(img_flat)
         labels = kmeans.labels_
 
     unique_labels, counts = np.unique(labels, return_counts=True)
@@ -66,9 +73,8 @@ def get_common_colors(img, colors=32, max_points=-1, N=3,
             colors.append(img_orig_flat[labels==ci,:].mean(axis=0))
         elif select_color == 'median':
             colors.append(np.median(img_orig_flat[labels==ci,:], axis=0))
-        elif select_color == 'mode':
-            colors.append(st.mode(img_orig_flat[labels==ci,:], axis=0)[0])
-
+        else:
+            raise Exception('Unknown select_color')
     return [c.astype(np.uint8) for c in colors]
 
 def load_image(image_path):
@@ -147,13 +153,30 @@ def create_strings_from_wikipedia(minimum_length, count, lang, max_length=-1):
     return sentences[0:count]
 
 
+def create_strings_from_textfile(textfile_path, min_length, max_length, count=-1):
+    with open(textfile_path, 'r') as f:
+        lines = f.readlines()
+    
+    sentences = []
+    for line in lines:
+        if len(line) > min_length:
+            strings = split_string(line, min_length, max_length)
+            sentences.extend(strings)
+        
+        if count > 0 and len(sentences) >= count:
+            break
+    
+    return sentences[0:count]
+
+
 class ResizeWithPad:
     
     def __init__(self, new_shape: Tuple[int, int], 
                  padding_color: Tuple[int] = (255, 255, 255)) -> None:
         self.new_shape = new_shape
+        self.padding_color = padding_color
     
-    def __call__(self, image: np.array, padding_color, **kwargs) -> np.array:
+    def __call__(self, image: np.array, padding_color=None, **kwargs) -> np.array:
         """Maintains aspect ratio and resizes with padding.
         Params:
             image: Image to be resized.
@@ -162,6 +185,8 @@ class ResizeWithPad:
         Returns:
             image: Resized image with padding
         """
+        if padding_color is None:
+            padding_color = self.padding_color
         original_shape = (image.shape[1], image.shape[0])
         ratio = float(max(self.new_shape))/max(original_shape)
         new_size = tuple([int(x*ratio) for x in original_shape])
@@ -208,7 +233,46 @@ class FontGenerator:
     """
     
     def __init__(self, size=(256, 256), min_length=5, max_length=30, backgrounds_path='backgrounds/', fonts_path='fonts/', background_ratio=0.8,
-                 gray_color=False, background_type=1, background_cache_size=1000):
+                 gray_color=False, background_type=1, background_cache_size=1000, source='wikipedia', textfile='text.txt', debug=False):
+        """
+        Generate images with text and background.
+
+        Parameters:
+        - size: Tuple[int, int] - The size of the generated images.
+        - min_length: int - The minimum length of the generated text.
+        - max_length: int - The maximum length of the generated text.
+        - backgrounds_path: str - The path to the directory containing background images.
+        - fonts_path: str - The path to the directory containing font files.
+        - background_ratio: float - The ratio of background images to be used.
+        - gray_color: bool - Whether to convert the background images to grayscale.
+        - background_type: int - The type of background to generate.
+        - background_cache_size: int - The size of the background images cache.
+        - source: str - The source of the text to generate.
+        - textfile_path: str - The path to the text file containing the text to generate.
+
+        Attributes:
+        - backgrounds: List[str] - The list of background image file paths.
+        - fonts: Dict[str, str] - The dictionary of font names and their corresponding file paths.
+        - fonts_cache: Dict[str, ImageFont] - The cache of loaded font objects.
+        - backgrounds_cache: Dict[str, Image] - The cache of loaded background images.
+        - text_cache: List[str] - The cache of generated text strings.
+        - resizer: ResizeWithPad - The image resizer object.
+
+        Methods:
+        - load_backgrounds(): Loads the background images from the specified directory.
+        - load_fonts(): Loads the font files from the specified directory.
+        - get_random_font(): Returns a random font object from the loaded fonts.
+        - generate_image(): Generates an image with text and background.
+        - get_font_color(): Calculates the font color to contrast with the background.
+        - generate_text(): Generates random text from the specified source.
+        - random_crop_with_padding(): Performs a random crop of the image with padding.
+        - get_random_background(): Returns a random background image from the cache or loads a new one.
+
+        Example usage:
+        generator = FontGenerator(size=(256, 256), min_length=5, max_length=30, backgrounds_path='backgrounds/', fonts_path='fonts/', background_ratio=0.8, gray_color=False, background_type=1, background_cache_size=1000, source='wikipedia', textfile_path='text.txt')
+        image = generator.generate_image(text='Hello World', font_size=32, font_color=(0, 0, 0), position='center', padding=10, background_image=True)
+        image.show()
+        """
         self.size = size
         self.min_length = min_length
         self.max_length = max_length
@@ -218,14 +282,20 @@ class FontGenerator:
         self.background_type = background_type
         self.background_cache_size = background_cache_size
         self.gray_color = gray_color
+        self.source = source
+        self.textfile_path = textfile
         
         self.backgrounds = []
         self.fonts = {}
         self.fonts_cache = {}
+        self.blacklisted_fonts = []
+        
+        self.debug = debug
         
         # Init background images cache
         self.load_backgrounds()
-        self.load_fonts()
+        self.load_blacklisted_fonts('blacklisted_fonts.txt')
+        self.load_fonts(self.fonts_path)
         
         self.resizer = ResizeWithPad(self.size, (255, 255, 255))
         
@@ -240,15 +310,14 @@ class FontGenerator:
         self.backgrounds_cache = {}
         self.text_cache = []
     
-    def load_fonts(self):
+    def load_blacklisted_fonts(self, path: str):
         # load blacklisted fonts
-        self.blacklisted_fonts = []
-        with open('blacklisted_fonts.txt', 'r') as f:
+        with open(path, 'r') as f:
             for line in f:
                 self.blacklisted_fonts.append(line.strip())
-        
-        self.fonts = {}
-        for root, dirs, files in os.walk(self.fonts_path):
+    
+    def load_fonts(self, path: str):
+        for root, dirs, files in os.walk(path):
             for file in files:
                 if file.endswith('.ttf'):
                     if file in self.blacklisted_fonts:
@@ -256,6 +325,9 @@ class FontGenerator:
                     fontname = os.path.splitext(file)[0]
                     print(fontname, os.path.join(root, file))
                     self.fonts[fontname] =  os.path.join(root, file)
+                    
+    def add_font_folder(self, path: str):
+        self.load_fonts(path)
                     
     def get_random_font(self):
         font_name = random.choice(list(self.fonts.keys()))
@@ -265,7 +337,7 @@ class FontGenerator:
         else:
             font = ImageFont.truetype(font_path, size=32)
             self.fonts_cache[font_name] = font
-        return font
+        return font, font_name
     
     def generate_image(self, text,
                        font_size: int = 32,
@@ -275,25 +347,31 @@ class FontGenerator:
                        background_image: bool = False,
                        background_color: Optional[Tuple[int, int, int]] = None,
                        ) -> Image:
+        logger.debug(f'Generating image with text: {text}')
         # Generate image
         if background_image:
             image = self.get_random_background()
-            colors = get_common_colors(np.array(image), colors=24, max_points=1e5, N=1)
+            logger.debug(f'Background image with size: {image.size}')
+            colors = get_common_colors(np.array(image), colors=12, max_points=1e5, N=1)
+            logger.debug(f'Common colors: {colors}')
             main_color = colors[0]
             if font_color is None:
                 candidates = [opposite_color_hls(main_color), *triadic_color_hls(main_color)]
                 font_color = random.choice(candidates)
-        elif background_color:
+            logger.debug(f'Font color: {font_color}')
+        elif background_color is not None:
             image = Image.new('RGB', self.size, background_color)
+            logger.debug(f'Background color: {background_color}')
         else:
+            rand_color = (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255))
             # Generate random color background
-            image = Image.new('RGB', self.size, 
-                              (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)))
+            image = Image.new('RGB', self.size, rand_color)
+            logger.debug(f'Random color background: {rand_color}')
 
         draw = ImageDraw.Draw(image)
         
         # Select random font and font size
-        font = self.get_random_font()
+        font, font_name = self.get_random_font()
         font = font.font_variant(size=font_size)
         
         if font_color is None:
@@ -315,7 +393,7 @@ class FontGenerator:
         # Draw text       
         draw.text((x, y), text, fill=font_color, font=font)
         
-        return image
+        return image, font_name, font_color
     
     def get_font_color(self, image):
         """
@@ -328,18 +406,25 @@ class FontGenerator:
         Generate random text from wikipedia
         """
         if len(self.text_cache) == 0:
-            # Load text from wikipedia
-            self.text_cache.extend(create_strings_from_wikipedia(self.min_length, 1000, 'en', self.max_length))
+            if self.source == 'wikipedia':
+                # Load text from wikipedia
+                self.text_cache.extend(create_strings_from_wikipedia(self.min_length, 1000, 'en', self.max_length))
+            elif self.source == 'textfile':
+                # Load text from text file
+                with open(self.textfile_path, 'r') as f:
+                    self.text_cache.extend(f.readlines())
         
         return self.text_cache.pop()
     
     def random_crop_with_padding(self, image, pad_color=(255, 255, 255)):
         """
         Random crop with padding
-0        """
+        """
         assert image.size[0] >= self.size[0] and image.size[1] >= self.size[1]
-        x = random.randint(0, image.size[0])
-        y = random.randint(0, image.size[1])
+        x = random.randint(0, image.size[0] - self.size[0])
+        y = random.randint(0, image.size[1] - self.size[1])
+        
+        image = image.crop((x, y, x + self.size[0], y + self.size[1]))
         
         image = self.resizer(np.array(image), padding_color=pad_color)
         image = Image.fromarray(image)
@@ -391,25 +476,61 @@ def parse_args():
     parser.add_argument('--output', type=str, default='output/', help='Output folder')
     parser.add_argument('--backgrounds', type=str, default='backgrounds/', help='Path for background images, supports JPG, PNG')
     parser.add_argument('--fonts', type=str, default='fonts/', help='Path to folder with fonts in TTF format')
+    parser.add_argument('--font_size_min', type=int, default=16, help='Minimum font size')
+    parser.add_argument('--font_size_max', type=int, default=96, help='Maximum font size')
     parser.add_argument('--background_ratio', type=float, default=0.8, help='Ratio between results with background image and white color')
-
+    parser.add_argument('--contrast_color_ratio', type=float, default=0.5, help='Ratio between results with contrast color and black color')
+    parser.add_argument('--text_source', type=str, default='wikipedia', help='Text source: wikipedia, textfile')
+    parser.add_argument('--textfile', type=str, default='textfile.txt', help='Path to text file with sentences dataset')
+    parser.add_argument('--add_font_folder', type=str, default=None, nargs='+', help='Add additional folders with fonts')
+    parser.add_argument('--debug', action='store_true', help='Debug mode')
+    
     args = parser.parse_args()
     return args
 
 
 def main(args):
+    # Create output folder
+    os.makedirs(args.output, exist_ok=True)
+    
+    # Enable debug logger level if debug mode is on
+    if args.debug:
+        logger.add(sys.stdout, level="DEBUG")
+
     # Init font generator
-    font_generator = FontGenerator(size=(256, 256), min_length=args.min_length, max_length=args.max_length, backgrounds_path=args.backgrounds, fonts_path=args.fonts, background_ratio=args.background_ratio)
+    font_generator = FontGenerator(size=(256, 256), min_length=args.min_length, max_length=args.max_length, 
+                                   backgrounds_path=args.backgrounds, fonts_path=args.fonts, background_ratio=args.background_ratio,
+                                   source=args.text_source, textfile=args.textfile)
+    
+    for folder in args.add_font_folder:
+        font_generator.add_font_folder(folder)
     
     # Generate images
     for i in tqdm(range(args.N)):
         try:
             text = font_generator.generate_text()
+            
+            if np.random.rand() < args.contrast_color_ratio:
+                font_color = None
+            else:
+                font_color = (0, 0, 0)
+            
+            font_size = random.randint(args.font_size_min, args.font_size_max)
+            
+            if random.random() < args.background_ratio:
+                background_image = True
+                background_color = None
+            else:
+                background_image = False
+                background_color = tuple(np.random.randint(0, 256, 3))
+            
             # Generate image
-            image = font_generator.generate_image(text, position='random', background_image=True, font_size=32, padding=10)
+            image, font_name, font_color = font_generator.generate_image(text, position='random', background_image=background_image, font_size=font_size, padding=10,
+                                                  font_color=font_color, background_color=background_color)
             
             # Save image
-            image.save(os.path.join(args.output, f'{i}.jpg'))
+            (Path(args.output) / font_name).mkdir(exist_ok=True)
+            image.save(os.path.join(args.output, font_name, f'{i}.jpg'))
         except Exception as e:
             print(f'Error while generating image {i}: {e}')
             traceback.print_exc()
