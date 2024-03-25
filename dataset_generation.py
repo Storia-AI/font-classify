@@ -4,7 +4,7 @@ Sample run:
 ```
 python -m venv my-venv
 source my-venv/bin/activate
-pip install -r requirements.dataset_generation.txt
+pip install -r requirements.txt
 
 python dataset_generation.py 100
 ```
@@ -524,7 +524,9 @@ def parse_args():
     parser.add_argument(
         "--max_fonts", type=int, default=3000, help="Maximum number of fonts to use"
     )
-    parser.add_argument("--output", type=str, default="output/", help="Output folder")
+    parser.add_argument(
+        "--output", type=str, default="sample_data/output", help="Output folder"
+    )
     parser.add_argument(
         "--backgrounds",
         type=str,

@@ -4,6 +4,8 @@ loguru
 numpy
 opencv-python
 scikit-learn
+tensorboard
+timm
 torch
 tqdm
 wikipedia

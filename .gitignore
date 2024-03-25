@@ -1,5 +1,6 @@
 # Repository specific
-output/
+sample_data/model
+sample_data/output
 check
 runs
 best_model_params.pt
