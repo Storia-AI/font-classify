@@ -12,7 +12,7 @@ from PIL import Image
 
 def parse_args():
     # Create an argument parser
-    parser = argparse.ArgumentParser(description="Batch inference script")
+    parser = argparse.ArgumentParser(description="Inference script")
 
     # Add arguments
     parser.add_argument(

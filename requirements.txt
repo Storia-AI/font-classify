@@ -1,7 +1,9 @@
 Pillow==9.5.0  # See https://github.com/tensorflow/models/issues/11040
 albumentations
+huggingface-hub
 loguru
 numpy
+onnxruntime
 opencv-python
 scikit-learn
 tensorboard

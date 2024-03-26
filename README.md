@@ -11,6 +11,16 @@ For a convenient GUI where you can upload your image and get instant predictions
 
 ![storia-gui](assets/storia-gui.png)
 
+## Run font classification inference
+A pre-trained checkpoint that can classify ~3,000 fonts is available on HuggingFace: [storia/font-classify-onnx](https://huggingface.co/storia/font-classify-onnx).
+
+See [infer_pretrained.py](infer_pretrained.py) for a sample script that loads the model from HuggingFace and runs inference on a directory of images.
+
+### A note on font names
+Our model was trained to output the name of the font *file* that was used for text rendering, e.g. `CoveredByYourGrace.ttf`. However, for some of the Google fonts, their filename doesn't match perfectly the name of the font that the [official Google Fonts API](https://developers.google.com/fonts) recognizes. For instance, the filename `CoveredByYourGrace.ttf` corresponds to the font name `Covered by Your Grace`. The font name is what you can pass to the Google API, or directly to the Google Fonts website as a URL query parameter, e.g. `https://fonts.google.com?query=Covered+By+Your+Grace`.
+
+We have curated these mappings manually under [google_fonts_mapping.tsv](google_fonts_mapping.tsv).
+
 ## Train your own model
 
 ### Getting started
@@ -34,19 +44,22 @@ To generate training data, you will need the following resources:
 
 Once you have these folders in place, you can simply run:
 ```
-python dataset_generation.py 10000 --backgrounds=/path/to/backgrounds --fonts=/path/to-fonts
+python dataset_generation.py 10000 --backgrounds=... --fonts=...
 ```
 where you can replace 10000 with the desired dataset size.
 
 ### Run training
 To run training, we recommend a GPU. However, it is feasible to run on CPU as well.
 ```
-python train.py --image_folder=/path/to/data/generated/above --output_folder=/path/where/to/place/model
+python train.py --image_folder=... --output_folder=...
 ```
 By default, this will train a Resnet50 model, but you can easily swap a different architecture by setting the `--network_type` flag to one of the network types supported by the [timm library](https://huggingface.co/docs/timm/en/reference/models).
 
-## Use our pretrained model
-TODO(julia): Make a hf_infer.py script that calls our model on Huggingface.
+### Run inference
+Finally, you can use the inference script on your own model:
+```
+python infer.py --model_folder=... --data_folder=...
+```
 
 ## Interested in an API?
 If you want a reliable API and don't want to bother hosting the model yourself, let us know at [info@storia.ai](mailto:info@storia.ai).
